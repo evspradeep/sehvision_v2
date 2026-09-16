@@ -1,0 +1,10 @@
+{
+  "name": "Remix Sankara Digital Vision Screening",
+  "description": "Child-friendly visual acuity (tumbling-E) and colour vision digital screening application for Sankara Eye Hospital school eye-screening programs.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

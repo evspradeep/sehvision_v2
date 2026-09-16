@@ -1,0 +1,117 @@
+'use client';
+
+import React from 'react';
+
+interface SankaraEmblemProps {
+  className?: string;
+  size?: number | string;
+  priority?: boolean;
+  isWhite?: boolean;
+}
+
+/**
+ * Official Authentic Symbol of Sankara Eye Hospital
+ * Features the radiant sacred eye, radiating sunburst rays, and sacred Acharyas.
+ * Rendered in 100% crisp, razor-sharp vector SVG.
+ */
+export const SankaraEmblem: React.FC<SankaraEmblemProps> = ({
+  className = 'w-full h-auto',
+  size,
+  isWhite = false,
+}) => {
+  return (
+    <div
+      className={`relative inline-flex items-center justify-center shrink-0 ${className}`}
+      style={
+        size
+          ? {
+              width: size,
+              height: typeof size === 'number' ? `${(size * 184) / 330}px` : undefined,
+            }
+          : undefined
+      }
+      id="sankara-hospital-emblem"
+    >
+      <svg
+        viewBox="0 0 660 368"
+        className="w-full h-auto object-contain select-none"
+        role="img"
+        aria-label="Sankara Eye Hospital Official Sacred Emblem"
+      >
+        {/* Left Wing (Sharp Arrowhead) */}
+        <path d="M 55,184 L 258.65,98.97 A 111 111 0 0,0 258.65,269.03 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+        
+        {/* Right Wing (Sharp Arrowhead) */}
+        <path d="M 605,184 L 401.35,98.97 A 111 111 0 0,1 401.35,269.03 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+        
+        {/* Central Sunburst Circle */}
+        <g id="central-sunburst">
+          <circle cx="330" cy="184" r="98" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 428.00,184.00 A 98 98 0 0,1 425.54,205.81 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 425.54,205.81 A 98 98 0 0,1 418.29,226.52 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 418.29,226.52 A 98 98 0 0,1 406.62,245.10 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 406.62,245.10 A 98 98 0 0,1 391.10,260.62 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 391.10,260.62 A 98 98 0 0,1 372.52,272.29 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 372.52,272.29 A 98 98 0 0,1 351.81,279.54 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 351.81,279.54 A 98 98 0 0,1 330.00,282.00 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 330.00,282.00 A 98 98 0 0,1 308.19,279.54 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 308.19,279.54 A 98 98 0 0,1 287.48,272.29 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 287.48,272.29 A 98 98 0 0,1 268.90,260.62 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 268.90,260.62 A 98 98 0 0,1 253.38,245.10 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 253.38,245.10 A 98 98 0 0,1 241.71,226.52 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 241.71,226.52 A 98 98 0 0,1 234.46,205.81 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 234.46,205.81 A 98 98 0 0,1 232.00,184.00 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 232.00,184.00 A 98 98 0 0,1 234.46,162.19 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 234.46,162.19 A 98 98 0 0,1 241.71,141.48 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 241.71,141.48 A 98 98 0 0,1 253.38,122.90 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 253.38,122.90 A 98 98 0 0,1 268.90,107.38 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 268.90,107.38 A 98 98 0 0,1 287.48,95.71 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 287.48,95.71 A 98 98 0 0,1 308.19,88.46 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 308.19,88.46 A 98 98 0 0,1 330.00,86.00 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 330.00,86.00 A 98 98 0 0,1 351.81,88.46 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 351.81,88.46 A 98 98 0 0,1 372.52,95.71 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 372.52,95.71 A 98 98 0 0,1 391.10,107.38 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 391.10,107.38 A 98 98 0 0,1 406.62,122.90 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 406.62,122.90 A 98 98 0 0,1 418.29,141.48 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+          <path d="M 330,184 L 418.29,141.48 A 98 98 0 0,1 425.54,162.19 Z" fill={isWhite ? '#FFFFFF' : '#EE5A24'} />
+          <path d="M 330,184 L 425.54,162.19 A 98 98 0 0,1 428.00,184.00 Z" fill={isWhite ? 'rgba(255,255,255,0.75)' : '#FBBF24'} />
+        </g>
+
+        {/* Sacred White Silhouette of Sri Adi Shankaracharya & Disciples */}
+        <g id="sacred-silhouette">
+          {/* Base / Ground Pedestal Arc */}
+          <path d="M 254,242 Q 330,258 406,242 C 386,253 358,258 330,258 C 302,258 274,253 254,242 Z" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+
+          {/* Staff (Danda) */}
+          <path d="M 268,114 L 272,114 L 271,246 L 267,246 Z" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+          <circle cx="270" cy="112" r="4" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+          {/* Sacred Kashaya cloth banner at top of staff */}
+          <path d="M 271,114 Q 284,122 280,135 Q 272,126 271,120 Z" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+
+          {/* Jagadguru Sri Adi Shankaracharya Head & Cowl */}
+          <path d="M 282,146 C 280,134 290,123 302,125 C 313,127 317,138 315,150 C 310,157 296,159 285,153 Z" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+          {/* Face profile & chin */}
+          <path d="M 311,142 C 316,144 317,149 314,153 C 311,156 307,156 305,154 Z" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+
+          {/* Shankaracharya Torso & Robes */}
+          <path d="M 282,154 C 276,170 272,196 272,246 L 322,246 C 320,230 318,206 314,192 C 316,184 322,176 326,170 C 328,166 326,161 320,163 C 314,165 310,170 306,175 C 302,170 293,164 285,160 Z" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+          
+          {/* Blessing / Teaching Hand (Chin / Abhaya Mudra) */}
+          <path d="M 312,168 C 321,164 332,166 335,171 C 331,175 323,177 314,175 Z" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+
+          {/* Disciple 1 (Kneeling with folded hands in Anjali Mudra) */}
+          <circle cx="354" cy="174" r="9" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+          {/* Folded hands in Namaste */}
+          <path d="M 341,180 Q 337,175 344,171 Q 348,178 346,184 Z" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+          {/* Kneeling robes and body */}
+          <path d="M 350,184 C 344,188 339,198 339,208 C 339,223 333,235 333,246 L 378,246 C 378,240 373,231 369,220 C 367,206 365,194 358,185 Z" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+
+          {/* Disciple 2 (Behind in reverence) */}
+          <circle cx="380" cy="182" r="8" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+          <path d="M 376,192 C 372,202 372,218 374,246 L 398,246 C 398,232 394,218 388,198 C 385,193 380,191 376,192 Z" fill={isWhite ? '#EE5A24' : '#FFFFFF'} />
+        </g>
+      </svg>
+    </div>
+  );
+};
+
