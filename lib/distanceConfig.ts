@@ -39,28 +39,28 @@ export interface DistanceGateConfig {
 
 export const DEFAULT_DISTANCE_CONFIG: DistanceGateConfig = {
   targetDistanceMeters: 1.0,
-  minAcceptableDistanceMeters: 0.92,
-  maxAcceptableDistanceMeters: 1.08,
-  nearWarningDistanceMeters: 0.80,
-  farWarningDistanceMeters: 1.22,
-  maxOffCenterToleranceNorm: 0.20, // allows ±20% deviation from frame center
-  maxHeadTiltRollDeg: 18,
-  maxHeadYawDeg: 22,
-  stabilityDurationMs: 1500, // 1.5 seconds of continuous perfect distance
-  minConfidenceThreshold: 0.55,
-  maxDistanceJitterForStabilityM: 0.045,
+  minAcceptableDistanceMeters: 0.90, // clinical 1.00m ± 0.10m target range
+  maxAcceptableDistanceMeters: 1.10, // clinical 1.00m ± 0.10m target range
+  nearWarningDistanceMeters: 0.78,
+  farWarningDistanceMeters: 1.25,
+  maxOffCenterToleranceNorm: 0.25, // natural user centering tolerance
+  maxHeadTiltRollDeg: 22,
+  maxHeadYawDeg: 24,
+  stabilityDurationMs: 1200, // 1.2 seconds of stable positioning
+  minConfidenceThreshold: 0.45,
+  maxDistanceJitterForStabilityM: 0.055,
 };
 
 export interface DistanceCalibrationParams {
-  /** Nominal calibration constant for iris diameter (~11.7 mm) - Highest biological constancy */
+  /** Nominal calibration constant for iris diameter (~11.7 mm) */
   nominalIrisConstant?: number;
   /** Nominal calibration constant for IPD (interpupillary distance ~63 mm) */
   nominalIpdConstant: number;
   /** Nominal calibration constant for bi-ocular width (~92 mm, landmarks 33-263) */
   nominalBiocularConstant?: number;
-  /** Nominal calibration constant for face width (bizygomatic ~138 mm) */
+  /** Nominal calibration constant for face width (bizygomatic ~137 mm) */
   nominalFaceWidthConstant: number;
-  /** Nominal calibration constant for face height (forehead-to-chin ~182 mm) - naturally yaw-invariant */
+  /** Nominal calibration constant for face height (forehead-to-chin ~175 mm) */
   nominalFaceHeightConstant?: number;
   /** User/device multiplier for fine tuning (default 1.0) */
   userFocalMultiplier: number;
@@ -71,19 +71,14 @@ export interface DistanceCalibrationParams {
 }
 
 export const DEFAULT_DISTANCE_CALIBRATION: DistanceCalibrationParams = {
-  // Calibrated for standard laptop webcam (~67° HFOV) at Z = 1.00 m
-  // Iris (~11.7 mm): K_iris ≈ 0.00884
-  nominalIrisConstant: 0.00884,
-  // IPD (~63 mm): K_ipd ≈ 0.0476
-  nominalIpdConstant: 0.0476,
-  // Bi-ocular width (~92 mm): K_biocular ≈ 0.0695
-  nominalBiocularConstant: 0.0695,
-  // Bizygomatic face width (~138 mm): K_width ≈ 0.1042
-  nominalFaceWidthConstant: 0.1042,
-  // Face height in isotropic width coordinates (~182 mm): K_height ≈ 0.1375
-  nominalFaceHeightConstant: 0.1375,
+  // Optically grounded for standard front selfie camera & laptop webcam (~74° DFOV) at Z = 1.00 m
+  nominalIrisConstant: 0.00891,
+  nominalIpdConstant: 0.0480,
+  nominalBiocularConstant: 0.0701,
+  nominalFaceWidthConstant: 0.1044,
+  nominalFaceHeightConstant: 0.1333,
   userFocalMultiplier: 1.0,
-  deviceProfileName: 'Standard Default Webcam / Mobile',
+  deviceProfileName: 'Standard Front Lens (~74° DFOV)',
 };
 
 export type DistanceAlignmentStatus =
@@ -100,6 +95,16 @@ export type DistanceAlignmentStatus =
   | 'slightly_far'
   | 'too_far'
   | 'low_confidence';
+
+export type EstimatorStatus =
+  | 'TOO_CLOSE'
+  | 'MOVE_CLOSER'
+  | 'ALMOST_READY'
+  | 'READY'
+  | 'TOO_FAR'
+  | 'NO_FACE'
+  | 'LOW_CONFIDENCE'
+  | 'MULTIPLE_FACES';
 
 export interface RawFaceMeasurement {
   timestamp: number;
@@ -126,6 +131,20 @@ export interface RawFaceMeasurement {
   faceWidthNorm?: number;
   /** Normalized forehead-to-chin face height in isotropic width units [0..1] */
   faceHeightNorm?: number;
+  /** Inter-eye distance in actual camera sensor pixels */
+  interEyeDistancePx?: number;
+  /** Left eye landmark in camera sensor pixels */
+  leftEyePx?: { x: number; y: number };
+  /** Right eye landmark in camera sensor pixels */
+  rightEyePx?: { x: number; y: number };
+  /** Actual video frame buffer width */
+  videoWidth?: number;
+  /** Actual video frame buffer height */
+  videoHeight?: number;
+  /** Estimated average frame luminance [0..255] */
+  luminance?: number;
+  /** Flagged if lighting is insufficient */
+  isLowLight?: boolean;
   /** Video aspect ratio (width / height) */
   aspectRatio?: number;
   /** Estimated head roll in degrees */
@@ -151,6 +170,8 @@ export interface DistanceValidationResult {
   formattedDistance: string;
   /** Current clinical alignment status */
   status: DistanceAlignmentStatus;
+  /** Modular status required for distance estimator */
+  estimatorStatus?: EstimatorStatus;
   /** Visual color theme for status badges and guides */
   statusColor: 'red' | 'orange' | 'green' | 'slate' | 'amber';
   /** Primary status headline matching prompt examples */

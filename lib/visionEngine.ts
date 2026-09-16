@@ -29,6 +29,11 @@ export class VisionEngine {
   private lastProcessedTime: number = 0;
   private fallbackCanvas: HTMLCanvasElement | null = null;
   private fallbackCtx: CanvasRenderingContext2D | null = null;
+  private luminanceCanvas: HTMLCanvasElement | null = null;
+  private luminanceCtx: CanvasRenderingContext2D | null = null;
+  private lastLuminanceCheckTime: number = 0;
+  private currentLuminance: number = 120;
+  private isLowLight: boolean = false;
 
   constructor(private callbacks: VisionEngineCallbacks) {}
 
@@ -129,9 +134,9 @@ export class VisionEngine {
   private loop = (): void => {
     if (!this.isProcessing || this.isDestroyed || !this.videoElement) return;
 
-    // Rate-limit processing to ~20-30 FPS to prevent mobile CPU throttling and save battery
+    // Rate-limit processing to ~18-22 FPS to prevent mobile CPU throttling and save battery
     const now = performance.now();
-    if (now - this.lastProcessedTime >= 40 && this.videoElement.readyState >= 2) {
+    if (now - this.lastProcessedTime >= 45 && this.videoElement.readyState >= 2) {
       this.lastProcessedTime = now;
       this.processCurrentFrame(now);
     }
@@ -139,8 +144,52 @@ export class VisionEngine {
     this.animFrameId = requestAnimationFrame(this.loop);
   };
 
+  /**
+   * Samples frame brightness to warn user if environment is too dark for optical screening
+   */
+  private checkFrameLuminance(now: number): { luminance: number; isLowLight: boolean } {
+    if (now - this.lastLuminanceCheckTime < 500) {
+      return { luminance: this.currentLuminance, isLowLight: this.isLowLight };
+    }
+    this.lastLuminanceCheckTime = now;
+
+    if (!this.videoElement || this.videoElement.videoWidth === 0) {
+      return { luminance: 120, isLowLight: false };
+    }
+
+    if (typeof document !== 'undefined' && !this.luminanceCanvas) {
+      this.luminanceCanvas = document.createElement('canvas');
+      this.luminanceCanvas.width = 32;
+      this.luminanceCanvas.height = 24;
+      this.luminanceCtx = this.luminanceCanvas.getContext('2d', { willReadFrequently: true });
+    }
+
+    if (!this.luminanceCtx || !this.luminanceCanvas) {
+      return { luminance: 120, isLowLight: false };
+    }
+
+    try {
+      this.luminanceCtx.drawImage(this.videoElement, 0, 0, 32, 24);
+      const imgData = this.luminanceCtx.getImageData(0, 0, 32, 24);
+      const data = imgData.data;
+      let totalLum = 0;
+      const count = 32 * 24;
+      for (let i = 0; i < data.length; i += 4) {
+        totalLum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      }
+      const avgLum = Math.round(totalLum / count);
+      this.currentLuminance = avgLum;
+      this.isLowLight = avgLum < 38;
+      return { luminance: avgLum, isLowLight: this.isLowLight };
+    } catch {
+      return { luminance: 120, isLowLight: false };
+    }
+  }
+
   private async processCurrentFrame(timestampMs: number): Promise<void> {
     if (!this.videoElement) return;
+
+    const { luminance, isLowLight } = this.checkFrameLuminance(timestampMs);
 
     try {
       // Strategy 1: MediaPipe Face Landmarker (most accurate)
@@ -152,6 +201,10 @@ export class VisionEngine {
             timestamp: Date.now(),
             faceCount: 0,
             confidence: 0,
+            videoWidth: this.videoElement.videoWidth,
+            videoHeight: this.videoElement.videoHeight,
+            luminance,
+            isLowLight,
           });
           return;
         }
@@ -162,12 +215,16 @@ export class VisionEngine {
             timestamp: Date.now(),
             faceCount,
             confidence: 0.9,
+            videoWidth: this.videoElement.videoWidth,
+            videoHeight: this.videoElement.videoHeight,
+            luminance,
+            isLowLight,
           });
           return;
         }
 
         const landmarks = result.faceLandmarks[0];
-        const measurement = this.extractMeasurementFromLandmarks(landmarks);
+        const measurement = this.extractMeasurementFromLandmarks(landmarks, luminance, isLowLight);
         this.callbacks.onMeasurement(measurement);
         return;
       }
@@ -180,6 +237,10 @@ export class VisionEngine {
             timestamp: Date.now(),
             faceCount: 0,
             confidence: 0,
+            videoWidth: this.videoElement.videoWidth,
+            videoHeight: this.videoElement.videoHeight,
+            luminance,
+            isLowLight,
           });
           return;
         }
@@ -189,6 +250,10 @@ export class VisionEngine {
             timestamp: Date.now(),
             faceCount: faces.length,
             confidence: 0.85,
+            videoWidth: this.videoElement.videoWidth,
+            videoHeight: this.videoElement.videoHeight,
+            luminance,
+            isLowLight,
           });
           return;
         }
@@ -196,6 +261,8 @@ export class VisionEngine {
         const face = faces[0];
         const vW = this.videoElement.videoWidth || 640;
         const vH = this.videoElement.videoHeight || 480;
+        const sensorDiagonal = Math.sqrt(vW * vW + vH * vH);
+        const refEquivWidth = sensorDiagonal * (1280.0 / 1468.6);
 
         const boxNorm = {
           x: face.boundingBox.x / vW,
@@ -211,23 +278,38 @@ export class VisionEngine {
 
         // Extract eye landmarks if detected natively
         let ipdNorm: number | undefined = undefined;
+        let interEyeDistancePx: number | undefined = undefined;
+        let leftEyePx: { x: number; y: number } | undefined = undefined;
+        let rightEyePx: { x: number; y: number } | undefined = undefined;
+
         const leftEye = face.landmarks?.find((l: any) => l.type === 'eye' && l.location.x < center.x * vW);
         const rightEye = face.landmarks?.find((l: any) => l.type === 'eye' && l.location.x >= center.x * vW);
 
         if (leftEye && rightEye) {
-          const dx = (rightEye.location.x - leftEye.location.x) / vW;
-          const dy = (rightEye.location.y - leftEye.location.y) / vH;
-          ipdNorm = Math.sqrt(dx * dx + dy * dy);
+          leftEyePx = { x: leftEye.location.x, y: leftEye.location.y };
+          rightEyePx = { x: rightEye.location.x, y: rightEye.location.y };
+          interEyeDistancePx = Math.hypot(rightEyePx.x - leftEyePx.x, rightEyePx.y - leftEyePx.y);
+          ipdNorm = interEyeDistancePx / refEquivWidth;
         }
+
+        const faceWidthPx = face.boundingBox.width;
+        const faceHeightPx = face.boundingBox.height;
 
         this.callbacks.onMeasurement({
           timestamp: Date.now(),
           faceCount: 1,
           box: boxNorm,
           center,
-          interpupillaryDistanceNorm: ipdNorm ?? boxNorm.width * 0.44, // approx 44% of face width
-          faceWidthNorm: boxNorm.width * 0.9,
-          faceHeightNorm: boxNorm.height,
+          interEyeDistancePx,
+          leftEyePx,
+          rightEyePx,
+          videoWidth: vW,
+          videoHeight: vH,
+          luminance,
+          isLowLight,
+          interpupillaryDistanceNorm: ipdNorm ?? (faceWidthPx * 0.44) / refEquivWidth,
+          faceWidthNorm: (faceWidthPx * 0.9) / refEquivWidth,
+          faceHeightNorm: faceHeightPx / refEquivWidth,
           headRollDeg: 0,
           headYawDeg: 0,
           confidence: 0.82,
@@ -238,6 +320,10 @@ export class VisionEngine {
       // Strategy 3: Canvas Luminance / Skin-Color Edge Silhouette Fallback
       if (this.fallbackCtx && this.fallbackCanvas) {
         const measurement = this.processFallbackCanvasFrame();
+        measurement.luminance = luminance;
+        measurement.isLowLight = isLowLight;
+        measurement.videoWidth = this.videoElement.videoWidth;
+        measurement.videoHeight = this.videoElement.videoHeight;
         this.callbacks.onMeasurement(measurement);
       }
     } catch (err) {
@@ -247,43 +333,59 @@ export class VisionEngine {
 
   /**
    * Extracts geometric metrics from MediaPipe 478 3D landmarks
+   * Uses sensor diagonal normalization for 100% orientation invariance between portrait & landscape
    */
-  private extractMeasurementFromLandmarks(landmarks: Array<{ x: number; y: number; z?: number }>): RawFaceMeasurement {
+  private extractMeasurementFromLandmarks(
+    landmarks: Array<{ x: number; y: number; z?: number }>,
+    luminance: number = 120,
+    isLowLight: boolean = false
+  ): RawFaceMeasurement {
     const vW = this.videoElement?.videoWidth || 640;
     const vH = this.videoElement?.videoHeight || 480;
     const aspectRatio = vW > 0 && vH > 0 ? vW / vH : 1.3333;
+
+    // Sensor diagonal is rotation-invariant: sqrt(w^2 + h^2) is identical in portrait and landscape!
+    // Scaling by 1280 / 1468.6 (~0.87158) maps diagonal directly to standard 16:9 1280px landscape width,
+    // preserving complete compatibility with all standard distance calibration constants.
+    const sensorDiagonal = Math.sqrt(vW * vW + vH * vH);
+    const refEquivWidth = sensorDiagonal * (1280.0 / 1468.6);
 
     // Pupil / Iris Center Landmarks
     const leftEye = landmarks[468] || landmarks[33];
     const rightEye = landmarks[473] || landmarks[263];
 
-    // Isotropic IPD in camera width units
-    const ipd_dx = rightEye.x - leftEye.x;
-    const ipd_dy = (rightEye.y - leftEye.y) / aspectRatio;
-    const ipdNorm = Math.sqrt(ipd_dx * ipd_dx + ipd_dy * ipd_dy);
+    // Raw camera sensor pixel coordinates
+    const leftEyePx = { x: leftEye.x * vW, y: leftEye.y * vH };
+    const rightEyePx = { x: rightEye.x * vW, y: rightEye.y * vH };
+    const interEyeDistancePx = Math.hypot(rightEyePx.x - leftEyePx.x, rightEyePx.y - leftEyePx.y);
 
-    // High-Precision Horizontal Visible Iris Diameter (HVID)
-    // Left iris: center 468, boundaries 469 (right) & 471 (left)
-    // Right iris: center 473, boundaries 474 (right) & 476 (left)
+    // Orientation-invariant IPD metric
+    const ipdNorm = interEyeDistancePx / refEquivWidth;
+
+    // High-Precision Horizontal Visible Iris Diameter (HVID ~11.7mm)
     let irisDiameterNorm: number | undefined = undefined;
     if (landmarks[468] && landmarks[469] && landmarks[471]) {
-      const ldx = landmarks[469].x - landmarks[471].x;
-      const ldy = (landmarks[469].y - landmarks[471].y) / aspectRatio;
-      const leftIris = Math.sqrt(ldx * ldx + ldy * ldy);
+      const leftIrisPx = Math.hypot(
+        (landmarks[469].x - landmarks[471].x) * vW,
+        (landmarks[469].y - landmarks[471].y) * vH
+      );
 
-      let rightIris: number | undefined;
+      let rightIrisPx: number | undefined;
       if (landmarks[473] && landmarks[474] && landmarks[476]) {
-        const rdx = landmarks[474].x - landmarks[476].x;
-        const rdy = (landmarks[474].y - landmarks[476].y) / aspectRatio;
-        rightIris = Math.sqrt(rdx * rdx + rdy * rdy);
+        rightIrisPx = Math.hypot(
+          (landmarks[474].x - landmarks[476].x) * vW,
+          (landmarks[474].y - landmarks[476].y) * vH
+        );
       }
 
-      const validDiameters: number[] = [];
-      if (leftIris > 0.003 && leftIris < 0.04) validDiameters.push(leftIris);
-      if (rightIris && rightIris > 0.003 && rightIris < 0.04) validDiameters.push(rightIris);
+      const validPixelDiameters: number[] = [];
+      // Expected iris pixel diameter at 0.5m - 2m is ~5px to ~60px
+      if (leftIrisPx > 4 && leftIrisPx < 80) validPixelDiameters.push(leftIrisPx);
+      if (rightIrisPx && rightIrisPx > 4 && rightIrisPx < 80) validPixelDiameters.push(rightIrisPx);
 
-      if (validDiameters.length > 0) {
-        irisDiameterNorm = validDiameters.reduce((a, b) => a + b, 0) / validDiameters.length;
+      if (validPixelDiameters.length > 0) {
+        const avgIrisPx = validPixelDiameters.reduce((a, b) => a + b, 0) / validPixelDiameters.length;
+        irisDiameterNorm = avgIrisPx / refEquivWidth;
       }
     }
 
@@ -292,24 +394,30 @@ export class VisionEngine {
     const rightOuter = landmarks[263];
     let biocularWidthNorm: number | undefined = undefined;
     if (leftOuter && rightOuter) {
-      const bdx = rightOuter.x - leftOuter.x;
-      const bdy = (rightOuter.y - leftOuter.y) / aspectRatio;
-      biocularWidthNorm = Math.sqrt(bdx * bdx + bdy * bdy);
+      const biocularPx = Math.hypot(
+        (rightOuter.x - leftOuter.x) * vW,
+        (rightOuter.y - leftOuter.y) * vH
+      );
+      biocularWidthNorm = biocularPx / refEquivWidth;
     }
 
     // Bizygomatic Face Width (landmarks 234 to 454)
     const leftCheek = landmarks[234] || landmarks[127];
     const rightCheek = landmarks[454] || landmarks[356];
-    const fdx = rightCheek.x - leftCheek.x;
-    const fdy = (rightCheek.y - leftCheek.y) / aspectRatio;
-    const faceWidthNorm = Math.sqrt(fdx * fdx + fdy * fdy);
+    const faceWidthPx = Math.hypot(
+      (rightCheek.x - leftCheek.x) * vW,
+      (rightCheek.y - leftCheek.y) * vH
+    );
+    const faceWidthNorm = faceWidthPx / refEquivWidth;
 
-    // Vertical Face Height (forehead 10 to chin 152 in isotropic width units)
+    // Vertical Face Height (forehead 10 to chin 152)
     const forehead = landmarks[10];
     const chin = landmarks[152];
-    const hdx = chin.x - forehead.x;
-    const hdy = (chin.y - forehead.y) / aspectRatio;
-    const faceHeightNorm = Math.sqrt(hdx * hdx + hdy * hdy);
+    const faceHeightPx = Math.hypot(
+      (chin.x - forehead.x) * vW,
+      (chin.y - forehead.y) * vH
+    );
+    const faceHeightNorm = faceHeightPx / refEquivWidth;
 
     const nose = landmarks[1];
     const center = {
@@ -317,13 +425,13 @@ export class VisionEngine {
       y: nose ? nose.y : (forehead.y + chin.y) / 2,
     };
 
-    // Calculate Head Roll angle in degrees (clockwise / counter-clockwise tilt)
-    const rollRad = Math.atan2((rightEye.y - leftEye.y) / aspectRatio, rightEye.x - leftEye.x);
+    // Head Roll angle in degrees
+    const rollRad = Math.atan2((rightEye.y - leftEye.y) * vH, (rightEye.x - leftEye.x) * vW);
     const headRollDeg = (rollRad * 180) / Math.PI;
 
-    // Calculate Head Yaw (horizontal turn left or right)
-    const distToLeft = Math.abs(nose.x - leftCheek.x);
-    const distToRight = Math.abs(rightCheek.x - nose.x);
+    // Head Yaw (horizontal turn left or right)
+    const distToLeft = Math.abs(nose.x - leftCheek.x) * vW;
+    const distToRight = Math.abs(rightCheek.x - nose.x) * vW;
     const totalCheekDist = distToLeft + distToRight || 0.001;
     const yawAsymmetry = (distToRight - distToLeft) / totalCheekDist;
     let headYawDeg = Math.max(-65, Math.min(65, yawAsymmetry * 65));
@@ -333,10 +441,10 @@ export class VisionEngine {
       headYawDeg = zYawDeg * 0.5 + headYawDeg * 0.5;
     }
 
-    // Calculate Head Pitch (looking up/down)
+    // Head Pitch (looking up/down)
     const eyeMidY = (leftEye.y + rightEye.y) / 2;
-    const upperFaceY = Math.abs(nose.y - eyeMidY);
-    const lowerFaceY = Math.abs(chin.y - nose.y);
+    const upperFaceY = Math.abs(nose.y - eyeMidY) * vH;
+    const lowerFaceY = Math.abs(chin.y - nose.y) * vH;
     const pitchRatio = (lowerFaceY - upperFaceY) / (lowerFaceY + upperFaceY || 0.001);
     let headPitchDeg = Math.max(-45, Math.min(45, (pitchRatio - 0.28) * 65));
     if (landmarks[10]?.z !== undefined && landmarks[152]?.z !== undefined) {
@@ -345,7 +453,7 @@ export class VisionEngine {
       headPitchDeg = headPitchDeg * 0.5 + zPitchDeg * 0.5;
     }
 
-    // Bounding Box
+    // Normalized Bounding Box in camera coordinates [0..1]
     let minX = 1, minY = 1, maxX = 0, maxY = 0;
     for (let i = 0; i < landmarks.length; i += 8) {
       const p = landmarks[i];
@@ -365,6 +473,13 @@ export class VisionEngine {
         height: Math.min(1, maxY - minY),
       },
       center,
+      interEyeDistancePx,
+      leftEyePx,
+      rightEyePx,
+      videoWidth: vW,
+      videoHeight: vH,
+      luminance,
+      isLowLight,
       irisDiameterNorm,
       interpupillaryDistanceNorm: ipdNorm,
       biocularWidthNorm,
@@ -385,6 +500,18 @@ export class VisionEngine {
   private processFallbackCanvasFrame(): RawFaceMeasurement {
     if (!this.fallbackCtx || !this.fallbackCanvas || !this.videoElement) {
       return { timestamp: Date.now(), faceCount: 0, confidence: 0 };
+    }
+
+    const vW = this.videoElement.videoWidth || 640;
+    const vH = this.videoElement.videoHeight || 480;
+
+    // Adapt fallback canvas to match camera aspect ratio (prevents squishing in portrait)
+    const isPortrait = vH > vW;
+    const targetW = isPortrait ? 120 : 160;
+    const targetH = isPortrait ? 160 : 120;
+    if (this.fallbackCanvas.width !== targetW || this.fallbackCanvas.height !== targetH) {
+      this.fallbackCanvas.width = targetW;
+      this.fallbackCanvas.height = targetH;
     }
 
     const cW = this.fallbackCanvas.width;
@@ -431,20 +558,24 @@ export class VisionEngine {
 
     const avgX = (sumX / skinPixelCount) / cW;
     const avgY = (sumY / skinPixelCount) / cH;
+    const canvasDiagonal = Math.sqrt(cW * cW + cH * cH);
+    const refEquivWidth = canvasDiagonal * 0.87158;
+
     const widthNorm = Math.min(0.65, Math.max(0.06, (maxX - minX) / cW));
     const heightNorm = Math.min(0.85, Math.max(0.08, (maxY - minY) / cH));
 
-    // Normal frontal human face has an aspect ratio of ~1.32 (height / width), so expected frontal width is ~0.76 * heightNorm
+    // Optical face measurements normalized to refEquivWidth
+    const faceWidthNorm = (maxX - minX) / refEquivWidth;
+    const faceHeightNorm = (maxY - minY) / refEquivWidth;
+    const ipdNorm = faceWidthNorm * 0.46;
+
+    // Normal frontal human face has an aspect ratio of ~1.32 (height / width)
     const expectedFrontalWidth = heightNorm * 0.76;
-    // If head turns left/right, widthNorm shrinks while heightNorm stays constant
     const widthRatio = Math.min(1.0, Math.max(0.40, widthNorm / (expectedFrontalWidth || 0.1)));
     const estimatedYawRad = Math.acos(widthRatio);
     const boxCenterX = (minX + maxX) / (2 * cW);
     const yawSign = avgX < boxCenterX ? -1 : 1;
     const headYawDeg = Math.round((estimatedYawRad * 180 / Math.PI) * yawSign);
-
-    // Provide robust unforeshortened width and IPD invariant to yaw rotation
-    const robustWidthNorm = Math.max(widthNorm, expectedFrontalWidth * 0.88);
 
     return {
       timestamp: Date.now(),
@@ -456,9 +587,9 @@ export class VisionEngine {
         height: heightNorm,
       },
       center: { x: avgX, y: avgY },
-      interpupillaryDistanceNorm: robustWidthNorm * 0.44,
-      faceWidthNorm: robustWidthNorm,
-      faceHeightNorm: heightNorm,
+      interpupillaryDistanceNorm: ipdNorm,
+      faceWidthNorm,
+      faceHeightNorm,
       headRollDeg: 0,
       headYawDeg,
       confidence: Math.min(0.80, 0.5 + skinRatio),
@@ -481,5 +612,7 @@ export class VisionEngine {
     this.nativeFaceDetector = null;
     this.fallbackCanvas = null;
     this.fallbackCtx = null;
+    this.luminanceCanvas = null;
+    this.luminanceCtx = null;
   }
 }

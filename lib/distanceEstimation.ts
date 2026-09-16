@@ -17,6 +17,7 @@ import {
   RawFaceMeasurement,
   DistanceValidationResult,
   DistanceAlignmentStatus,
+  EstimatorStatus,
 } from './distanceConfig';
 import { getAutoDetectedCalibration } from './deviceDetection';
 
@@ -173,55 +174,52 @@ export function calculateRawEstimatedDistance(
 
   const estimates: { distance: number; weight: number; label: string }[] = [];
 
-  // Metric 1: Horizontal Visible Iris Diameter (HVID ~11.7 mm)
-  // Gold standard in biometric distance: extremely low anatomical variation across humans (~4%)
-  if (measurement.irisDiameterNorm && measurement.irisDiameterNorm > 0.0035) {
-    const distFromIris = (nominalIrisConstant / measurement.irisDiameterNorm) * userFocalMultiplier;
-    if (distFromIris >= 0.30 && distFromIris <= 3.2) {
-      // Highest confidence anchor
-      estimates.push({ distance: distFromIris, weight: 0.40, label: 'iris' });
-    }
-  }
-
-  // Metric 2: Interpupillary distance with yaw projection compensation
+  // Metric 1: Interpupillary Distance (IPD ~63 mm) - Primary Anchor (sub-pixel pupil center accuracy)
   if (measurement.interpupillaryDistanceNorm && measurement.interpupillaryDistanceNorm > 0.012) {
     const correctedIpdNorm = measurement.interpupillaryDistanceNorm / yawForeshorteningFactor;
     const distFromIpd = (nominalIpdConstant / correctedIpdNorm) * userFocalMultiplier;
     if (distFromIpd >= 0.25 && distFromIpd <= 3.5) {
-      const weight = Math.max(0.18, 0.30 * yawForeshorteningFactor);
+      const weight = Math.max(0.25, 0.48 * yawForeshorteningFactor);
       estimates.push({ distance: distFromIpd, weight, label: 'ipd' });
     }
   }
 
-  // Metric 3: Bi-ocular width (outer canthus to outer canthus ~92 mm)
+  // Metric 2: Bi-ocular width (outer canthus to outer canthus ~92 mm) - Secondary Anchor
   if (measurement.biocularWidthNorm && measurement.biocularWidthNorm > 0.02) {
     const correctedBiocularNorm = measurement.biocularWidthNorm / yawForeshorteningFactor;
     const distFromBiocular = (nominalBiocularConstant / correctedBiocularNorm) * userFocalMultiplier;
     if (distFromBiocular >= 0.25 && distFromBiocular <= 3.5) {
-      const weight = Math.max(0.12, 0.20 * yawForeshorteningFactor);
+      const weight = Math.max(0.18, 0.28 * yawForeshorteningFactor);
       estimates.push({ distance: distFromBiocular, weight, label: 'biocular' });
     }
   }
 
-  // Metric 4: Vertical Face Height (FOREHEAD-TO-CHIN ~182 mm)
-  // Invariant to left/right head yaw, compensated for pitch
+  // Metric 3: Vertical Face Height (FOREHEAD-TO-CHIN ~175 mm) - Yaw-Invariant Anchor
   if (measurement.faceHeightNorm && measurement.faceHeightNorm > 0.035) {
     const correctedHeightNorm = measurement.faceHeightNorm / pitchForeshorteningFactor;
     const distFromHeight = (nominalFaceHeightConstant / correctedHeightNorm) * userFocalMultiplier;
     if (distFromHeight >= 0.25 && distFromHeight <= 3.5) {
-      // When head is turned sideways, height becomes the primary anchor
+      // When head is turned sideways, height becomes even more important
       const weight = (0.20 + 0.25 * (1 - yawForeshorteningFactor)) * pitchForeshorteningFactor;
       estimates.push({ distance: distFromHeight, weight, label: 'height' });
     }
   }
 
-  // Metric 5: Bizygomatic Face Width with yaw compensation
+  // Metric 4: Bizygomatic Face Width with yaw compensation (~137 mm)
   if (measurement.faceWidthNorm && measurement.faceWidthNorm > 0.03) {
     const correctedWidthNorm = measurement.faceWidthNorm / yawForeshorteningFactor;
     const distFromWidth = (nominalFaceWidthConstant / correctedWidthNorm) * userFocalMultiplier;
     if (distFromWidth >= 0.25 && distFromWidth <= 3.5) {
-      const weight = Math.max(0.08, 0.15 * yawForeshorteningFactor);
+      const weight = Math.max(0.08, 0.16 * yawForeshorteningFactor);
       estimates.push({ distance: distFromWidth, weight, label: 'face_width' });
+    }
+  }
+
+  // Metric 5: Horizontal Visible Iris Diameter (HVID ~11.7 mm) - Supplementary Micro-Anchor
+  if (measurement.irisDiameterNorm && measurement.irisDiameterNorm > 0.0035) {
+    const distFromIris = (nominalIrisConstant / measurement.irisDiameterNorm) * userFocalMultiplier;
+    if (distFromIris >= 0.30 && distFromIris <= 3.2) {
+      estimates.push({ distance: distFromIris, weight: 0.08, label: 'iris' });
     }
   }
 
@@ -520,6 +518,19 @@ export class DistanceStabilityTracker {
       isReady = false;
     }
 
+    let estimatorStatus: EstimatorStatus;
+    if (isReady) {
+      estimatorStatus = 'READY';
+    } else if (currentDist < config.minAcceptableDistanceMeters) {
+      estimatorStatus = 'TOO_CLOSE';
+    } else if (currentDist > config.farWarningDistanceMeters) {
+      estimatorStatus = 'TOO_FAR';
+    } else if (currentDist > config.maxAcceptableDistanceMeters) {
+      estimatorStatus = 'MOVE_CLOSER';
+    } else {
+      estimatorStatus = 'ALMOST_READY';
+    }
+
     this.lastMeasurementTime = now;
 
     return {
@@ -528,6 +539,7 @@ export class DistanceStabilityTracker {
       estimatedDistanceCm: currentDistCm,
       formattedDistance: currentDistFormatted,
       status,
+      estimatorStatus,
       statusColor,
       statusMessage,
       guidanceText,
@@ -543,12 +555,89 @@ export class DistanceStabilityTracker {
 }
 
 /**
+ * Modular DistanceEstimator component matching architectural requirements.
+ * Accepts:
+ * - detected facial measurement in pixels & normalized coords
+ * - camera/video dimensions
+ * - calibration parameters
+ * - target distance & facing mode
+ * 
+ * Returns:
+ * { distanceMeters, confidence, stable, status }
+ */
+export class DistanceEstimator {
+  private tracker: DistanceStabilityTracker;
+
+  constructor() {
+    this.tracker = new DistanceStabilityTracker();
+  }
+
+  public estimate(params: {
+    measurement: RawFaceMeasurement | null;
+    videoDimensions?: { width: number; height: number };
+    calibration?: DistanceCalibrationParams;
+    targetDistance?: number;
+    facingMode?: 'user' | 'environment';
+    now?: number;
+  }): {
+    distanceMeters: number;
+    confidence: number;
+    stable: boolean;
+    status: EstimatorStatus;
+    validation: DistanceValidationResult;
+  } {
+    const config = params.targetDistance
+      ? { ...DEFAULT_DISTANCE_CONFIG, targetDistanceMeters: params.targetDistance }
+      : DEFAULT_DISTANCE_CONFIG;
+
+    const validation = this.tracker.update(
+      params.measurement,
+      params.calibration ?? DEFAULT_DISTANCE_CALIBRATION,
+      config,
+      params.now ?? Date.now(),
+      params.facingMode ?? 'user'
+    );
+
+    const status: EstimatorStatus =
+      validation.estimatorStatus ||
+      (validation.isReady
+        ? 'READY'
+        : validation.status === 'no_face'
+        ? 'NO_FACE'
+        : validation.status === 'multiple_faces'
+        ? 'MULTIPLE_FACES'
+        : validation.status === 'low_confidence'
+        ? 'LOW_CONFIDENCE'
+        : validation.status === 'too_close'
+        ? 'TOO_CLOSE'
+        : validation.status === 'too_far'
+        ? 'TOO_FAR'
+        : validation.status === 'slightly_far'
+        ? 'MOVE_CLOSER'
+        : 'ALMOST_READY');
+
+    return {
+      distanceMeters: validation.estimatedDistanceMeters,
+      confidence: validation.confidence,
+      stable: validation.isReady,
+      status,
+      validation,
+    };
+  }
+
+  public reset(): void {
+    this.tracker.reset();
+  }
+}
+
+/**
  * Creates a calibrated userFocalMultiplier by setting the current detected distance to exactly 1.00m
  */
 export function calibrateToTargetDistance(
   currentRawDistance: number,
   targetDistance: number = 1.0,
-  currentCalibration: DistanceCalibrationParams = DEFAULT_DISTANCE_CALIBRATION
+  currentCalibration: DistanceCalibrationParams = DEFAULT_DISTANCE_CALIBRATION,
+  facingMode: 'user' | 'environment' = 'user'
 ): DistanceCalibrationParams {
   if (currentRawDistance <= 0.2 || currentRawDistance >= 4.0) {
     return currentCalibration;
@@ -565,6 +654,6 @@ export function calibrateToTargetDistance(
     lastCalibratedAt: new Date().toISOString(),
   };
 
-  saveDistanceCalibration(updated);
+  saveDistanceCalibration(updated, facingMode);
   return updated;
 }

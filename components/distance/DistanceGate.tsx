@@ -21,6 +21,8 @@ import {
 import { VisionEngine } from '@/lib/visionEngine';
 import { FacePositionGuide } from './FacePositionGuide';
 import { DistanceIndicator } from './DistanceIndicator';
+import { DistanceDebugOverlay } from './DistanceDebugOverlay';
+import { DistanceCalibrationModal } from './DistanceCalibrationModal';
 import {
   Camera,
   CameraOff,
@@ -39,6 +41,8 @@ import {
   UserCheck,
   SwitchCamera,
   Eye,
+  Activity,
+  Ruler,
 } from 'lucide-react';
 
 interface DistanceGateProps {
@@ -77,6 +81,9 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
   const [cameraState, setCameraState] = useState<'idle' | 'requesting' | 'streaming' | 'denied' | 'unavailable'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [showDebug, setShowDebug] = useState<boolean>(false);
+  const [showCalibration, setShowCalibration] = useState<boolean>(false);
+  const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number }>({ width: 640, height: 480 });
   const facingModeRef = useRef<'user' | 'environment'>('user');
   useEffect(() => {
     facingModeRef.current = facingMode;
@@ -90,7 +97,7 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
     calibrationRef.current = calibration;
   }, [calibration]);
 
-  // Sync on window resize or orientation change
+  // Sync on window resize or orientation change without interrupting video stream
   useEffect(() => {
     const handleResize = () => {
       const mode = facingModeRef.current;
@@ -98,6 +105,12 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
       const savedCalib = getSavedDistanceCalibration(mode);
       setDeviceProfile(updated);
       setCalibration(savedCalib);
+      if (videoRef.current && videoRef.current.videoWidth > 0) {
+        setVideoDimensions({
+          width: videoRef.current.videoWidth,
+          height: videoRef.current.videoHeight,
+        });
+      }
     };
     window.addEventListener('resize', handleResize);
     window.addEventListener('orientationchange', handleResize);
@@ -179,7 +192,6 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
   }));
 
   const [rawMeasurement, setRawMeasurement] = useState<RawFaceMeasurement | null>(null);
-  const [videoDimensions, setVideoDimensions] = useState({ width: 640, height: 480 });
 
   // Stop camera tracks cleanly
   const stopCameraStream = useCallback(() => {
@@ -228,26 +240,41 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
     }
 
     try {
-      // Configure constraints tailored for front vs rear
-      const constraints: MediaStreamConstraints = {
-        video: {
-          facingMode: { ideal: targetMode },
-          width: { ideal: 640, max: 1280 },
-          height: { ideal: 480, max: 720 },
-          frameRate: { ideal: 30, max: 30 },
+      // Progressive fallback chain for mobile Safari, Android Chrome, and desktop webcams
+      let stream: MediaStream | null = null;
+      const attempts: MediaStreamConstraints[] = [
+        // Attempt 1: Optimal mobile/desktop constraints with ideal facing mode
+        {
+          video: {
+            facingMode: { ideal: targetMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
         },
-        audio: false,
-      };
-
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch {
-        // Fallback for strict browser constraint parsers
-        stream = await navigator.mediaDevices.getUserMedia({
+        // Attempt 2: Plain facing mode constraint
+        {
           video: { facingMode: targetMode },
           audio: false,
-        });
+        },
+        // Attempt 3: Any video device fallback
+        {
+          video: true,
+          audio: false,
+        },
+      ];
+
+      for (const constraint of attempts) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraint);
+          if (stream) break;
+        } catch {
+          // try next constraint in chain
+        }
+      }
+
+      if (!stream) {
+        throw new Error('Unable to access camera on this device.');
       }
 
       mediaStreamRef.current = stream;
@@ -264,10 +291,9 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
         videoRef.current.onloadedmetadata = () => {
           if (videoRef.current) {
             videoRef.current.play().catch(console.warn);
-            setVideoDimensions({
-              width: videoRef.current.videoWidth || 640,
-              height: videoRef.current.videoHeight || 480,
-            });
+            const w = videoRef.current.videoWidth || 640;
+            const h = videoRef.current.videoHeight || 480;
+            setVideoDimensions({ width: w, height: h });
             setCameraState('streaming');
 
             // Resume computer vision engine once new stream is playing
@@ -387,18 +413,48 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
           <div />
         )}
 
-        {/* Auto-detected Lens Profile Badge */}
-        <div
-          suppressHydrationWarning={true}
-          className="flex items-center gap-1.5 text-xs font-bold text-slate-700 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs"
-          title={deviceProfile.description}
-          id="device-auto-profile-badge"
-        >
-          {deviceProfile.category === 'mobile' && <Smartphone className="w-3.5 h-3.5 text-orange-600" />}
-          {deviceProfile.category === 'tablet' && <Tablet className="w-3.5 h-3.5 text-orange-600" />}
-          {deviceProfile.category === 'laptop' && <Laptop className="w-3.5 h-3.5 text-orange-600" />}
-          {deviceProfile.category === 'desktop' && <Monitor className="w-3.5 h-3.5 text-orange-600" />}
-          <span suppressHydrationWarning={true}>Auto-Calibrated: {deviceProfile.label}</span>
+        <div className="flex items-center gap-2">
+          {/* Distance Calibration Tool Button */}
+          <button
+            type="button"
+            onClick={() => setShowCalibration(true)}
+            className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs transition cursor-pointer"
+            id="btn-open-calibration-header"
+            title="Fine-tune distance accuracy or calibrate 1.00m lock"
+          >
+            <Ruler className="w-3.5 h-3.5 text-orange-600" />
+            <span className="hidden sm:inline">Calibrate</span>
+          </button>
+
+          {/* Debug Mode Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setShowDebug((prev) => !prev)}
+            className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-xl border transition cursor-pointer ${
+              showDebug
+                ? 'bg-slate-900 text-emerald-400 border-slate-700 shadow-2xs'
+                : 'bg-white text-slate-600 hover:text-slate-900 border-slate-200 shadow-2xs'
+            }`}
+            id="btn-toggle-distance-debug"
+            title="Toggle Real-Time Camera & Landmark Diagnostics"
+          >
+            <Activity className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="hidden sm:inline">Debug</span>
+          </button>
+
+          {/* Auto-detected Lens Profile Badge */}
+          <div
+            suppressHydrationWarning={true}
+            className="flex items-center gap-1.5 text-xs font-bold text-slate-700 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs"
+            title={deviceProfile.description}
+            id="device-auto-profile-badge"
+          >
+            {deviceProfile.category === 'mobile' && <Smartphone className="w-3.5 h-3.5 text-orange-600" />}
+            {deviceProfile.category === 'tablet' && <Tablet className="w-3.5 h-3.5 text-orange-600" />}
+            {deviceProfile.category === 'laptop' && <Laptop className="w-3.5 h-3.5 text-orange-600" />}
+            {deviceProfile.category === 'desktop' && <Monitor className="w-3.5 h-3.5 text-orange-600" />}
+            <span suppressHydrationWarning={true}>Auto-Calibrated: {deviceProfile.label}</span>
+          </div>
         </div>
       </div>
 
@@ -541,6 +597,7 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
         <DistanceIndicator
           validation={validation}
           targetDistanceMeters={activeConfig.targetDistanceMeters}
+          onOpenCalibration={() => setShowCalibration(true)}
         />
 
         {/* LOCKED / UNLOCKED Action Button */}
@@ -589,6 +646,29 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
           )}
         </div>
       </div>
+
+      {/* Distance Calibration Modal */}
+      <DistanceCalibrationModal
+        isOpen={showCalibration}
+        onClose={() => setShowCalibration(false)}
+        validation={validation}
+        calibration={calibration}
+        onCalibrationChange={(updated) => {
+          setCalibration(updated);
+          calibrationRef.current = updated;
+        }}
+        facingMode={facingMode}
+      />
+
+      {/* Debug Overlay */}
+      <DistanceDebugOverlay
+        validation={validation}
+        videoDimensions={videoDimensions}
+        deviceProfile={deviceProfile}
+        calibrationMultiplier={calibration.userFocalMultiplier}
+        isOpen={showDebug}
+        onClose={() => setShowDebug(false)}
+      />
     </div>
   );
 };

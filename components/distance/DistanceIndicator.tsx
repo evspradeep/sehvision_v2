@@ -11,16 +11,19 @@ import {
   Maximize2,
   Minimize2,
   Sparkles,
+  Ruler,
 } from 'lucide-react';
 
 interface DistanceIndicatorProps {
   validation: DistanceValidationResult;
   targetDistanceMeters?: number;
+  onOpenCalibration?: () => void;
 }
 
 export const DistanceIndicator: React.FC<DistanceIndicatorProps> = ({
   validation,
   targetDistanceMeters = 1.0,
+  onOpenCalibration,
 }) => {
   const {
     formattedDistance,
@@ -78,11 +81,23 @@ export const DistanceIndicator: React.FC<DistanceIndicatorProps> = ({
       {/* Live Distance Value Banner */}
       <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex items-center justify-between gap-4">
         <div>
-          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5 flex-wrap">
             <span>Estimated Distance</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">
               Target: {targetDistanceMeters.toFixed(2)} m
             </span>
+            {onOpenCalibration && (
+              <button
+                type="button"
+                onClick={onOpenCalibration}
+                className="flex items-center gap-1 text-[10px] text-orange-600 hover:text-orange-700 bg-orange-50 hover:bg-orange-100 px-2 py-0.5 rounded-md font-bold transition cursor-pointer border border-orange-200 ml-1"
+                title="Calibrate distance accuracy or set 1.00m lock"
+                id="btn-indicator-calibrate"
+              >
+                <Ruler className="w-3 h-3 text-orange-600" />
+                <span>Calibrate</span>
+              </button>
+            )}
           </div>
           <div className="flex items-baseline gap-2 mt-0.5">
             <span
@@ -165,6 +180,22 @@ export const DistanceIndicator: React.FC<DistanceIndicatorProps> = ({
           </div>
         )}
       </div>
+
+      {/* Low-Light Environmental Warning Banner */}
+      {validation.rawMeasurement?.isLowLight && (
+        <div
+          className="flex items-start gap-2.5 p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs"
+          id="low-light-warning"
+        >
+          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <span className="font-extrabold">Low Light Detected: </span>
+            <span className="text-amber-800">
+              Please move to a brighter room or face a light source so the camera can measure your distance accurately.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Optical Precision Telemetry Strip */}
       {validation.rawMeasurement && validation.faceCount === 1 && (
