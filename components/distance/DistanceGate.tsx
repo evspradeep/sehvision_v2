@@ -84,7 +84,7 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
 
   // Auto-detected device profile and lens calibration state
   const [deviceProfile, setDeviceProfile] = useState<DeviceProfileInfo>(() => getAutoDetectedProfile('user'));
-  const [calibration, setCalibration] = useState<DistanceCalibrationParams>(() => getSavedDistanceCalibration());
+  const [calibration, setCalibration] = useState<DistanceCalibrationParams>(() => getSavedDistanceCalibration('user'));
   const calibrationRef = useRef<DistanceCalibrationParams>(calibration);
   useEffect(() => {
     calibrationRef.current = calibration;
@@ -93,9 +93,11 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
   // Sync on window resize or orientation change
   useEffect(() => {
     const handleResize = () => {
-      const updated = getAutoDetectedProfile(facingModeRef.current);
+      const mode = facingModeRef.current;
+      const updated = getAutoDetectedProfile(mode);
+      const savedCalib = getSavedDistanceCalibration(mode);
       setDeviceProfile(updated);
-      setCalibration(updated.calibration);
+      setCalibration(savedCalib);
     };
     window.addEventListener('resize', handleResize);
     window.addEventListener('orientationchange', handleResize);
@@ -252,9 +254,10 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
 
       // Auto-calibrate optical profile for active camera lens
       const updatedProfile = getAutoDetectedProfile(targetMode);
+      const savedCalib = getSavedDistanceCalibration(targetMode);
       setDeviceProfile(updatedProfile);
-      setCalibration(updatedProfile.calibration);
-      calibrationRef.current = updatedProfile.calibration;
+      setCalibration(savedCalib);
+      calibrationRef.current = savedCalib;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;

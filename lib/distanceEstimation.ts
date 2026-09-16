@@ -20,17 +20,22 @@ import {
 } from './distanceConfig';
 import { getAutoDetectedCalibration } from './deviceDetection';
 
-// Local storage key for custom device distance calibration
-const DISTANCE_CALIBRATION_STORAGE_KEY = 'sankara_device_distance_calibration_v1';
+// Local storage key prefix for custom device distance calibration
+const DISTANCE_CALIBRATION_STORAGE_PREFIX = 'sankara_device_dist_calib_v2_';
+
+function getStorageKey(facingMode: 'user' | 'environment'): string {
+  return `${DISTANCE_CALIBRATION_STORAGE_PREFIX}${facingMode}`;
+}
 
 /**
- * Retrieves auto-detected distance calibration according to device environment (Laptop, Desktop, Mobile)
+ * Retrieves auto-detected distance calibration according to device environment and lens facing mode (Front vs Rear)
  */
-export function getSavedDistanceCalibration(): DistanceCalibrationParams {
-  if (typeof window === 'undefined') return getAutoDetectedCalibration();
+export function getSavedDistanceCalibration(facingMode: 'user' | 'environment' = 'user'): DistanceCalibrationParams {
+  if (typeof window === 'undefined') return getAutoDetectedCalibration(facingMode);
   try {
-    const raw = localStorage.getItem(DISTANCE_CALIBRATION_STORAGE_KEY);
-    const autoDefault = getAutoDetectedCalibration();
+    const key = getStorageKey(facingMode);
+    const raw = localStorage.getItem(key);
+    const autoDefault = getAutoDetectedCalibration(facingMode);
     if (!raw) return autoDefault;
     const parsed = JSON.parse(raw);
     return {
@@ -39,17 +44,18 @@ export function getSavedDistanceCalibration(): DistanceCalibrationParams {
     };
   } catch (err) {
     console.warn('Failed to load distance calibration from storage:', err);
-    return getAutoDetectedCalibration();
+    return getAutoDetectedCalibration(facingMode);
   }
 }
 
 /**
- * Saves calibrated device parameters to localStorage
+ * Saves calibrated device parameters to localStorage per facing mode
  */
-export function saveDistanceCalibration(params: DistanceCalibrationParams): void {
+export function saveDistanceCalibration(params: DistanceCalibrationParams, facingMode: 'user' | 'environment' = 'user'): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(DISTANCE_CALIBRATION_STORAGE_KEY, JSON.stringify(params));
+    const key = getStorageKey(facingMode);
+    localStorage.setItem(key, JSON.stringify(params));
   } catch (err) {
     console.warn('Failed to persist distance calibration:', err);
   }
@@ -58,15 +64,22 @@ export function saveDistanceCalibration(params: DistanceCalibrationParams): void
 /**
  * Resets calibration to nominal factory defaults
  */
-export function resetDistanceCalibration(): DistanceCalibrationParams {
+export function resetDistanceCalibration(facingMode?: 'user' | 'environment'): DistanceCalibrationParams {
   if (typeof window !== 'undefined') {
     try {
-      localStorage.removeItem(DISTANCE_CALIBRATION_STORAGE_KEY);
+      if (facingMode) {
+        localStorage.removeItem(getStorageKey(facingMode));
+      } else {
+        localStorage.removeItem(getStorageKey('user'));
+        localStorage.removeItem(getStorageKey('environment'));
+      }
+      // Also clean up obsolete legacy v1 key
+      localStorage.removeItem('sankara_device_distance_calibration_v1');
     } catch {
       // ignore
     }
   }
-  return { ...DEFAULT_DISTANCE_CALIBRATION };
+  return getAutoDetectedCalibration(facingMode ?? 'user');
 }
 
 /**
@@ -230,6 +243,25 @@ export function calculateRawEstimatedDistance(
 
   if (estimates.length === 0) {
     return 1.0; // neutral fallback
+  }
+
+  // Consensus Outlier Rejection:
+  // If we have 3 or more metric estimates (e.g. iris, ipd, biocular, height, face_width),
+  // compute median distance across candidate estimates. Reject or downweight estimates that deviate >25%
+  // from consensus median (prevents noisy single-metric glitch from skewing distance).
+  if (estimates.length >= 3) {
+    const rawDistances = estimates.map((e) => e.distance).sort((a, b) => a - b);
+    const medianVal = rawDistances[Math.floor(rawDistances.length / 2)];
+    for (const est of estimates) {
+      const dev = Math.abs(est.distance - medianVal) / Math.max(0.1, medianVal);
+      if (dev > 0.28) {
+        // Severe outlier: drop influence
+        est.weight *= 0.05;
+      } else if (dev > 0.15) {
+        // Mild outlier: dampen influence
+        est.weight *= 0.40;
+      }
+    }
   }
 
   // Multi-metric robust weighted fusion

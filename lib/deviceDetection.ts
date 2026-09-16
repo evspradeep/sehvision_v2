@@ -133,7 +133,7 @@ export function detectDeviceCategory(): DeviceCategory {
 export function getAutoDetectedProfile(facingMode: 'user' | 'environment' = 'user'): DeviceProfileInfo {
   const category = detectDeviceCategory();
 
-  // If rear (environment) camera is active on mobile or tablet:
+  // If rear (environment) camera is active:
   if (facingMode === 'environment') {
     if (category === 'mobile') {
       return {
@@ -167,6 +167,13 @@ export function getAutoDetectedProfile(facingMode: 'user' | 'environment' = 'use
         },
       };
     }
+    // Laptop / Desktop with rear/external camera toggle:
+    const base = DEVICE_CALIBRATION_PROFILES[category];
+    return {
+      ...base,
+      label: `${base.label} (Examiner View)`,
+      description: `${base.label} camera configured for examiner distance screening`,
+    };
   }
 
   return DEVICE_CALIBRATION_PROFILES[category];
