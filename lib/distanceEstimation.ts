@@ -269,8 +269,11 @@ export class DistanceStabilityTracker {
     rawMeasurement: RawFaceMeasurement | null,
     calibration: DistanceCalibrationParams = DEFAULT_DISTANCE_CALIBRATION,
     config: DistanceGateConfig = DEFAULT_DISTANCE_CONFIG,
-    now: number = Date.now()
+    now: number = Date.now(),
+    facingMode: 'user' | 'environment' = 'user'
   ): DistanceValidationResult {
+    const isRear = facingMode === 'environment';
+
     // Case 1: No detection data / camera issue
     if (!rawMeasurement || rawMeasurement.faceCount === 0) {
       this.perfectDistanceStartTime = null;
@@ -282,8 +285,10 @@ export class DistanceStabilityTracker {
         formattedDistance: '--',
         status: 'no_face',
         statusColor: 'slate',
-        statusMessage: 'Position your face in the frame',
-        guidanceText: 'Ensure your room is well lit and look straight into the camera.',
+        statusMessage: isRear ? 'Aim rear camera at student' : 'Position your face in the frame',
+        guidanceText: isRear
+          ? 'Hold device at student eye-level and align their face inside the oval.'
+          : 'Ensure your room is well lit and look straight into the camera.',
         isCentered: false,
         isDistanceAcceptable: false,
         stabilityProgress: 0,
@@ -327,7 +332,9 @@ export class DistanceStabilityTracker {
         status: 'low_confidence',
         statusColor: 'amber',
         statusMessage: 'Hold steady for camera focus',
-        guidanceText: 'Avoid rapid movements so the camera can measure your distance accurately.',
+        guidanceText: isRear
+          ? 'Hold the phone steady so the rear lens can focus on the student.'
+          : 'Avoid rapid movements so the camera can measure your distance accurately.',
         isCentered: false,
         isDistanceAcceptable: false,
         stabilityProgress: 0,
@@ -390,23 +397,31 @@ export class DistanceStabilityTracker {
     if (currentDist < config.nearWarningDistanceMeters) {
       status = 'too_close';
       statusColor = 'red';
-      statusMessage = 'Too close — move farther away';
-      guidanceText = 'Step back until the distance reaches approximately 1.0 metre.';
+      statusMessage = isRear ? 'Too close — move back from student' : 'Too close — move farther away';
+      guidanceText = isRear
+        ? 'Move camera back or ask student to take a step back to reach 1.00 m.'
+        : 'Step back until the distance reaches approximately 1.0 metre.';
     } else if (currentDist < config.minAcceptableDistanceMeters) {
       status = 'slightly_close';
       statusColor = 'orange';
-      statusMessage = 'Move slightly farther away';
-      guidanceText = 'Almost there! Take a small half-step back.';
+      statusMessage = isRear ? 'Move camera slightly back' : 'Move slightly farther away';
+      guidanceText = isRear
+        ? 'Almost at 1.0 m! Step back a few centimetres.'
+        : 'Almost there! Take a small half-step back.';
     } else if (currentDist > config.farWarningDistanceMeters) {
       status = 'too_far';
       statusColor = 'red';
-      statusMessage = 'Too far — move closer';
-      guidanceText = 'Step forward towards the screen to reach 1.0 metre.';
+      statusMessage = isRear ? 'Too far — move closer to student' : 'Too far — move closer';
+      guidanceText = isRear
+        ? 'Move camera forward or ask student to take a step closer to reach 1.00 m.'
+        : 'Step forward towards the screen to reach 1.0 metre.';
     } else if (currentDist > config.maxAcceptableDistanceMeters) {
       status = 'slightly_far';
       statusColor = 'orange';
-      statusMessage = 'Move slightly closer';
-      guidanceText = 'Almost there! Take a small half-step forward.';
+      statusMessage = isRear ? 'Move camera slightly closer' : 'Move slightly closer';
+      guidanceText = isRear
+        ? 'Almost at 1.0 m! Step forward a few centimetres.'
+        : 'Almost there! Take a small half-step forward.';
     } else {
       // Inside acceptable range: 0.92 m - 1.08 m (Target 1.00 m)
       isDistanceAcceptable = true;
@@ -414,27 +429,36 @@ export class DistanceStabilityTracker {
       if (!isCentered) {
         status = 'off_center';
         statusColor = 'orange';
-        statusMessage = xOffset > config.maxOffCenterToleranceNorm
-          ? (center.x < 0.5 ? 'Move slightly right' : 'Move slightly left')
-          : 'Center your face in the guide';
-        guidanceText = 'Align your face directly inside the oval guide frame.';
+        if (isRear) {
+          statusMessage = xOffset > config.maxOffCenterToleranceNorm
+            ? (center.x < 0.5 ? 'Pan camera left' : 'Pan camera right')
+            : 'Center student in the guide';
+          guidanceText = 'Align student face directly inside the oval target.';
+        } else {
+          statusMessage = xOffset > config.maxOffCenterToleranceNorm
+            ? (center.x < 0.5 ? 'Move slightly right' : 'Move slightly left')
+            : 'Center your face in the guide';
+          guidanceText = 'Align your face directly inside the oval guide frame.';
+        }
       } else if (isTilted || isTurned) {
         status = 'face_tilted';
         statusColor = 'orange';
         if (isTurned && rawMeasurement.headYawDeg) {
-          statusMessage = rawMeasurement.headYawDeg > 0
-            ? 'Turn face slightly left'
-            : 'Turn face slightly right';
+          statusMessage = isRear
+            ? 'Student should face forward'
+            : (rawMeasurement.headYawDeg > 0 ? 'Turn face slightly left' : 'Turn face slightly right');
           guidanceText = 'Face directly towards the camera for accurate visual screening.';
         } else {
-          statusMessage = 'Look straight at the screen';
-          guidanceText = 'Keep your head level and look directly forward.';
+          statusMessage = isRear ? 'Keep student head level' : 'Look straight at the screen';
+          guidanceText = 'Keep head level and look directly forward.';
         }
       } else {
         status = 'perfect_distance';
         statusColor = 'green';
-        statusMessage = 'Perfect distance';
-        guidanceText = 'Hold this position steady to unlock the vision test.';
+        statusMessage = isRear ? '1.00 m Distance Verified!' : 'Perfect distance';
+        guidanceText = isRear
+          ? 'Hold steady. Verifying 1.00 m distance to unlock test.'
+          : 'Hold this position steady to unlock the vision test.';
       }
     }
 

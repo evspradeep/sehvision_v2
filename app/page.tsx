@@ -542,9 +542,14 @@ export default function HomePage() {
                 </div>
                 <div className="flex-1 min-w-0 text-center sm:text-left">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-2">
-                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900 leading-snug">
-                      Keep device kept at 1 meter distance from the eye
-                    </h3>
+                    <div>
+                      <h3 className="text-sm sm:text-base font-extrabold text-slate-900 leading-snug">
+                        Keep device kept at 1 meter distance from the eye
+                      </h3>
+                      <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                        Supports both Front Camera (self-test) and Rear Camera (teacher/examiner mode)
+                      </p>
+                    </div>
                     <span className="self-center sm:self-auto shrink-0 px-2 py-0.5 rounded-md bg-orange-100 text-orange-800 text-[10px] font-black uppercase">
                       1 Meter
                     </span>

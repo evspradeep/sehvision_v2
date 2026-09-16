@@ -14,6 +14,7 @@ import {
 } from '@/lib/distanceEstimation';
 import {
   getAutoDetectedProfile,
+  getAutoDetectedCalibration,
   DeviceProfileInfo,
   DEVICE_CALIBRATION_PROFILES,
 } from '@/lib/deviceDetection';
@@ -35,6 +36,9 @@ import {
   Smartphone,
   Tablet,
   Monitor,
+  UserCheck,
+  SwitchCamera,
+  Eye,
 } from 'lucide-react';
 
 interface DistanceGateProps {
@@ -67,14 +71,19 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const visionEngineRef = useRef<VisionEngine | null>(null);
   const stabilityTrackerRef = useRef<DistanceStabilityTracker>(new DistanceStabilityTracker());
+  const previousIsReadyRef = useRef<boolean>(false);
 
   // Camera & permission states
   const [cameraState, setCameraState] = useState<'idle' | 'requesting' | 'streaming' | 'denied' | 'unavailable'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const facingModeRef = useRef<'user' | 'environment'>('user');
+  useEffect(() => {
+    facingModeRef.current = facingMode;
+  }, [facingMode]);
 
   // Auto-detected device profile and lens calibration state
-  const [deviceProfile, setDeviceProfile] = useState<DeviceProfileInfo>(() => getAutoDetectedProfile());
+  const [deviceProfile, setDeviceProfile] = useState<DeviceProfileInfo>(() => getAutoDetectedProfile('user'));
   const [calibration, setCalibration] = useState<DistanceCalibrationParams>(() => getSavedDistanceCalibration());
   const calibrationRef = useRef<DistanceCalibrationParams>(calibration);
   useEffect(() => {
@@ -84,7 +93,7 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
   // Sync on window resize or orientation change
   useEffect(() => {
     const handleResize = () => {
-      const updated = getAutoDetectedProfile();
+      const updated = getAutoDetectedProfile(facingModeRef.current);
       setDeviceProfile(updated);
       setCalibration(updated.calibration);
     };
@@ -94,6 +103,59 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
     };
+  }, []);
+
+  // Web Audio Lock Chime (Pleasant acoustic confirmation when 1.00m lock triggers)
+  const playLockChime = useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+
+      // Note 1: C5 (523.25 Hz)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(523.25, now);
+      gain1.gain.setValueAtTime(0.12, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.16);
+
+      // Note 2: E5 (659.25 Hz)
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(659.25, now + 0.09);
+      gain2.gain.setValueAtTime(0.15, now + 0.09);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.09);
+      osc2.stop(now + 0.28);
+
+      // Note 3: G5 (783.99 Hz)
+      const osc3 = ctx.createOscillator();
+      const gain3 = ctx.createGain();
+      osc3.type = 'sine';
+      osc3.frequency.setValueAtTime(783.99, now + 0.18);
+      gain3.gain.setValueAtTime(0.18, now + 0.18);
+      gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+      osc3.connect(gain3);
+      gain3.connect(ctx.destination);
+      osc3.start(now + 0.18);
+      osc3.stop(now + 0.42);
+
+      // Haptic confirmation vibration on mobile
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate([40, 50, 70]);
+      }
+    } catch {
+      // AudioContext blocked or not supported
+    }
   }, []);
 
   // Live validation state
@@ -137,13 +199,25 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
     }
   }, []);
 
-  // Initialize and start camera stream
-  const startCamera = useCallback(async () => {
+  // Initialize and start camera stream with specific facing mode
+  const startCamera = useCallback(async (targetMode: 'user' | 'environment' = facingModeRef.current) => {
     setCameraState('requesting');
     setErrorMessage(null);
 
-    // Stop any existing stream
-    stopCameraStream();
+    // Pause vision processing and stop old tracks
+    if (visionEngineRef.current) {
+      visionEngineRef.current.stop();
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          // ignore
+        }
+      });
+      mediaStreamRef.current = null;
+    }
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setCameraState('unavailable');
@@ -152,9 +226,10 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
     }
 
     try {
+      // Configure constraints tailored for front vs rear
       const constraints: MediaStreamConstraints = {
         video: {
-          facingMode: { ideal: facingMode },
+          facingMode: { ideal: targetMode },
           width: { ideal: 640, max: 1280 },
           height: { ideal: 480, max: 720 },
           frameRate: { ideal: 30, max: 30 },
@@ -162,8 +237,24 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
         audio: false,
       };
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch {
+        // Fallback for strict browser constraint parsers
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: targetMode },
+          audio: false,
+        });
+      }
+
       mediaStreamRef.current = stream;
+
+      // Auto-calibrate optical profile for active camera lens
+      const updatedProfile = getAutoDetectedProfile(targetMode);
+      setDeviceProfile(updatedProfile);
+      setCalibration(updatedProfile.calibration);
+      calibrationRef.current = updatedProfile.calibration;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -176,7 +267,7 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
             });
             setCameraState('streaming');
 
-            // Start computer vision engine once video is playing
+            // Resume computer vision engine once new stream is playing
             if (visionEngineRef.current) {
               visionEngineRef.current.start(videoRef.current);
             }
@@ -193,9 +284,9 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
         setErrorMessage(err.message || 'Unable to open camera on this device.');
       }
     }
-  }, [facingMode, stopCameraStream]);
+  }, []);
 
-  // Setup VisionEngine on mount
+  // Setup VisionEngine ONCE on mount (prevents expensive WASM re-instantiation on camera flip)
   useEffect(() => {
     const engine = new VisionEngine({
       onMeasurement: (measurement) => {
@@ -204,9 +295,16 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
           measurement,
           calibrationRef.current,
           configRef.current,
-          Date.now()
+          Date.now(),
+          facingModeRef.current
         );
         setValidation(res);
+
+        // Trigger audio lock chime upon stability completion
+        if (res.isReady && !previousIsReadyRef.current) {
+          playLockChime();
+        }
+        previousIsReadyRef.current = res.isReady;
       },
       onError: (err) => {
         console.warn('Vision engine warning:', err);
@@ -215,8 +313,8 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
         if (status === 'loading') {
           setValidation((prev) => ({
             ...prev,
-            statusMessage: 'Loading face detection model...',
-            guidanceText: 'Initializing optical computer vision sensor...',
+            statusMessage: 'Loading optical detection model...',
+            guidanceText: 'Initializing biometric distance tracker...',
           }));
         }
       },
@@ -224,7 +322,7 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
 
     visionEngineRef.current = engine;
     engine.initialize().then(() => {
-      startCamera();
+      startCamera('user');
     });
 
     return () => {
@@ -232,11 +330,22 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
       engine.destroy();
       visionEngineRef.current = null;
     };
-  }, [startCamera, stopCameraStream]);
+  }, [playLockChime, startCamera, stopCameraStream]);
+
+  // Switch camera mode (front vs rear)
+  const handleSelectFacingMode = (mode: 'user' | 'environment') => {
+    if (mode === facingMode) return;
+    setFacingMode(mode);
+    facingModeRef.current = mode;
+    previousIsReadyRef.current = false;
+    stabilityTrackerRef.current.reset();
+    startCamera(mode);
+  };
 
   // Flip camera toggle
   const handleFlipCamera = () => {
-    setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
+    const nextMode = facingMode === 'user' ? 'environment' : 'user';
+    handleSelectFacingMode(nextMode);
   };
 
   // Trigger test start when unlocked
@@ -251,6 +360,8 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
     stopCameraStream();
     onUnlockAndStart(1.0);
   };
+
+  const isRear = facingMode === 'environment';
 
   return (
     <div className="w-full max-w-2xl mx-auto space-y-4" id="distance-gate-container">
@@ -290,17 +401,53 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
 
       {/* Main Vision Stage & Camera Viewport */}
       <div className="bg-white rounded-3xl p-4 sm:p-6 border border-orange-100 shadow-sm space-y-4">
+        {/* Screening Mode / Title */}
         <div className="text-center">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-100 text-orange-800 text-[11px] font-black uppercase tracking-wider mb-2">
             <ShieldCheck className="w-3.5 h-3.5 text-orange-700" />
-            <span>Clinical 1-Metre Gate</span>
+            <span>Clinical 1-Metre Distance Gate</span>
           </div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-            Position Yourself at 1.0 Metre
+            {isRear ? 'Examiner Mode: Aim at Student at 1.0 Metre' : 'Position Yourself at 1.0 Metre'}
           </h2>
           <p className="text-xs sm:text-sm text-slate-600 font-medium mt-1 max-w-md mx-auto">
-            Visual acuity screening requires an exact 1-metre distance. The test unlocks automatically once you are properly positioned.
+            {isRear
+              ? 'Hold device at student eye level. Point rear camera until student face aligns inside oval and 1.00 m turns green.'
+              : 'Visual acuity screening requires an exact 1-metre distance. The test unlocks automatically once you are properly positioned.'}
           </p>
+        </div>
+
+        {/* Camera Lens Mode Selector: Front vs Rear View */}
+        <div className="flex items-center justify-center gap-1.5 p-1 bg-slate-100/90 rounded-2xl border border-slate-200/90 max-w-md mx-auto">
+          <button
+            type="button"
+            onClick={() => handleSelectFacingMode('user')}
+            className={`flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
+              !isRear
+                ? 'bg-white text-slate-900 shadow-xs border border-slate-200 font-extrabold'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+            id="tab-camera-front"
+            title="Front selfie camera for self-screening"
+          >
+            <UserCheck className="w-4 h-4 text-orange-600" />
+            <span>Front (Self-Test)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSelectFacingMode('environment')}
+            className={`flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
+              isRear
+                ? 'bg-white text-teal-900 shadow-xs border border-teal-200 font-extrabold'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+            id="tab-camera-rear"
+            title="Rear outward-facing camera for teachers and examiners"
+          >
+            <Camera className="w-4 h-4 text-teal-600" />
+            <span>Rear (Examiner Mode)</span>
+          </button>
         </div>
 
         {/* Camera Stage Container with Pure White Surround */}
@@ -310,29 +457,41 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
             validation={validation}
             videoWidth={videoDimensions.width}
             videoHeight={videoDimensions.height}
+            facingMode={facingMode}
           >
-            {/* Live Video Preview (Mirrored): Mounted strictly inside the oval */}
+            {/* Live Video Preview: Front camera is mirrored (-scale-x-100), Rear camera is un-mirrored (scale-x-100) */}
             <video
               ref={videoRef}
               playsInline
               muted
               autoPlay
-              className="w-full h-full object-cover -scale-x-100"
+              className={`w-full h-full object-cover transition-transform duration-300 ${
+                isRear ? 'scale-x-100' : '-scale-x-100'
+              }`}
               id="camera-stream-video"
             />
           </FacePositionGuide>
 
-          {/* Camera Flip Icon (if mobile device with multiple lenses) */}
+          {/* Camera Flip Quick Button */}
           {cameraState === 'streaming' && (
             <button
               type="button"
               onClick={handleFlipCamera}
-              className="absolute top-3 right-3 z-30 w-9 h-9 rounded-full bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 shadow-xs flex items-center justify-center transition cursor-pointer"
-              title="Flip camera"
+              className="absolute top-3 right-3 z-30 px-2.5 py-1.5 rounded-xl bg-white/95 hover:bg-white text-slate-700 border border-slate-200 shadow-sm flex items-center gap-1.5 text-xs font-bold transition cursor-pointer active:scale-95"
+              title={isRear ? 'Switch to Front Camera' : 'Switch to Rear Camera'}
               id="btn-flip-camera"
             >
-              <RefreshCw className="w-4 h-4" />
+              <SwitchCamera className="w-4 h-4 text-orange-600" />
+              <span className="hidden sm:inline">{isRear ? 'Use Front' : 'Use Rear'}</span>
             </button>
+          )}
+
+          {/* Rear Camera Indicator Banner */}
+          {isRear && cameraState === 'streaming' && (
+            <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-500/90 text-white text-[10px] font-bold shadow-2xs backdrop-blur-xs">
+              <Camera className="w-3 h-3" />
+              <span>Rear Viewfinder Active</span>
+            </div>
           )}
 
           {/* Privacy Badge on Camera Preview */}
@@ -357,7 +516,7 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
               </div>
               <button
                 type="button"
-                onClick={startCamera}
+                onClick={() => startCamera(facingMode)}
                 className="py-2 px-4 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -391,7 +550,9 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
               id="btn-start-test-unlocked"
             >
               <CheckCircle2 className="w-6 h-6 stroke-[2.5]" />
-              <span>START VISION TEST (1.00 m LOCKED)</span>
+              <span>
+                {isRear ? 'START VISION TEST (STUDENT AT 1.00 m)' : 'START VISION TEST (1.00 m LOCKED)'}
+              </span>
               <ArrowRight className="w-5 h-5 stroke-[2]" />
             </button>
           ) : (
@@ -402,7 +563,11 @@ export const DistanceGate: React.FC<DistanceGateProps> = ({
               id="btn-start-test-locked"
             >
               <Lock className="w-5 h-5" />
-              <span>START TEST (LOCKED — ADJUST DISTANCE)</span>
+              <span>
+                {isRear
+                  ? 'START TEST (LOCKED — ALIGN STUDENT AT 1.00 m)'
+                  : 'START TEST (LOCKED — ADJUST DISTANCE)'}
+              </span>
             </button>
           )}
 

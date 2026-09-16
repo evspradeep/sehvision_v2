@@ -127,18 +127,56 @@ export function detectDeviceCategory(): DeviceCategory {
 }
 
 /**
- * Retrieves the automatically detected device profile and calibration constants
+ * Retrieves the automatically detected device profile and calibration constants,
+ * taking into account whether the front (selfie) or rear (environment/back) camera is active.
  */
-export function getAutoDetectedProfile(): DeviceProfileInfo {
+export function getAutoDetectedProfile(facingMode: 'user' | 'environment' = 'user'): DeviceProfileInfo {
   const category = detectDeviceCategory();
+
+  // If rear (environment) camera is active on mobile or tablet:
+  if (facingMode === 'environment') {
+    if (category === 'mobile') {
+      return {
+        category: 'mobile',
+        label: 'Mobile (Rear Camera)',
+        description: 'Smartphone rear camera (Auto-adjusted for ~68° main optical lens)',
+        calibration: {
+          nominalIrisConstant: 0.00867,
+          nominalIpdConstant: 0.0467,
+          nominalBiocularConstant: 0.0682,
+          nominalFaceWidthConstant: 0.1023,
+          nominalFaceHeightConstant: 0.1349,
+          userFocalMultiplier: 1.00,
+          deviceProfileName: 'Mobile Rear Camera (~68° FOV)',
+        },
+      };
+    }
+    if (category === 'tablet') {
+      return {
+        category: 'tablet',
+        label: 'Tablet (Rear Camera)',
+        description: 'Tablet rear camera (Auto-adjusted for ~66° main optical lens)',
+        calibration: {
+          nominalIrisConstant: 0.00901,
+          nominalIpdConstant: 0.0485,
+          nominalBiocularConstant: 0.0708,
+          nominalFaceWidthConstant: 0.1062,
+          nominalFaceHeightConstant: 0.1401,
+          userFocalMultiplier: 1.00,
+          deviceProfileName: 'Tablet Rear Camera (~66° FOV)',
+        },
+      };
+    }
+  }
+
   return DEVICE_CALIBRATION_PROFILES[category];
 }
 
 /**
- * Returns calibration parameters tailored automatically for the active device
+ * Returns calibration parameters tailored automatically for the active device and camera lens
  */
-export function getAutoDetectedCalibration(): DistanceCalibrationParams {
-  const profile = getAutoDetectedProfile();
+export function getAutoDetectedCalibration(facingMode: 'user' | 'environment' = 'user'): DistanceCalibrationParams {
+  const profile = getAutoDetectedProfile(facingMode);
   return {
     ...profile.calibration,
     lastCalibratedAt: new Date().toISOString(),

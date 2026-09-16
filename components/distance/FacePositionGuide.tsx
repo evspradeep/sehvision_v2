@@ -8,6 +8,7 @@ interface FacePositionGuideProps {
   validation: DistanceValidationResult;
   videoWidth: number;
   videoHeight: number;
+  facingMode?: 'user' | 'environment';
   children?: React.ReactNode;
 }
 
@@ -15,9 +16,11 @@ export const FacePositionGuide: React.FC<FacePositionGuideProps> = ({
   validation,
   videoWidth,
   videoHeight,
+  facingMode = 'user',
   children,
 }) => {
   const { statusColor, isCentered, status, stabilityProgress, rawMeasurement } = validation;
+  const isRear = facingMode === 'environment';
 
   // Frame colors based on clinical validation state
   const colorMap = {
@@ -62,8 +65,10 @@ export const FacePositionGuide: React.FC<FacePositionGuideProps> = ({
 
   // Detect directional arrows if off-center
   const center = rawMeasurement?.center;
-  const showLeftArrow = center && center.x > 0.65; // User appears on their right in mirror
-  const showRightArrow = center && center.x < 0.35;
+  // In front camera (mirrored), center.x > 0.65 means subject appears on screen right
+  // In rear camera (non-mirrored viewfinder), center.x > 0.65 means subject is to the right
+  const showLeftArrow = isRear ? (center && center.x < 0.35) : (center && center.x > 0.65);
+  const showRightArrow = isRear ? (center && center.x > 0.65) : (center && center.x < 0.35);
   const showUpArrow = center && center.y > 0.60;
   const showDownArrow = center && center.y < 0.30;
 
@@ -89,7 +94,7 @@ export const FacePositionGuide: React.FC<FacePositionGuideProps> = ({
         <div className="absolute top-[38%] left-5 right-5 flex items-center justify-between pointer-events-none z-20 opacity-90">
           <div className="w-5 h-[1.5px] bg-white/90 shadow-2xs" />
           <span className="text-[9px] font-extrabold uppercase tracking-widest text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] bg-slate-900/60 px-2 py-0.5 rounded-full border border-white/20">
-            Eye Level
+            {isRear ? 'Student Eye Level' : 'Eye Level'}
           </span>
           <div className="w-5 h-[1.5px] bg-white/90 shadow-2xs" />
         </div>
@@ -99,7 +104,9 @@ export const FacePositionGuide: React.FC<FacePositionGuideProps> = ({
           <div
             className="absolute w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm transition-all duration-150 z-20 pointer-events-none"
             style={{
-              left: `${(1 - rawMeasurement.center.x) * 100}%`, // mirror x
+              left: isRear
+                ? `${rawMeasurement.center.x * 100}%`
+                : `${(1 - rawMeasurement.center.x) * 100}%`,
               top: `${rawMeasurement.center.y * 100}%`,
               backgroundColor: theme.accent,
               transform: 'translate(-50%, -50%)',
